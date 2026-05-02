@@ -1,14 +1,18 @@
 import os
 import io
-import base64
+import uuid
 import urllib.request
 import fitz  # PyMuPDF
-from flask import Flask, request, jsonify
+from flask import Flask, request, jsonify, send_from_directory
 
 app = Flask(__name__)
 
 TEMPLATE_URL = "https://files.manuscdn.com/user_upload_by_module/session_file/112574404/CRldWkvlXFkamsKs.pdf"
 BG_COLOR = (0.914, 0.882, 0.820)
+
+# Directory to store generated PDFs temporarily
+PDF_DIR = "/tmp/sordoe_pdfs"
+os.makedirs(PDF_DIR, exist_ok=True)
 
 # Cache the template in memory after first download
 _template_bytes = None
@@ -85,6 +89,11 @@ def health():
     return jsonify({"status": "ok"})
 
 
+@app.route("/pdfs/<filename>", methods=["GET"])
+def serve_pdf(filename):
+    return send_from_directory(PDF_DIR, filename, mimetype="application/pdf")
+
+
 @app.route("/generate", methods=["POST"])
 def generate():
     data = request.get_json(force=True)
@@ -93,12 +102,21 @@ def generate():
 
     try:
         pdf_buf, edition_str = fill_pdf(first_name, int(float(str(edition_number).strip())))
-        filename = f"Sordoe_Opening_{first_name}_{edition_str}.pdf"
-        pdf_b64 = base64.b64encode(pdf_buf.read()).decode("utf-8")
+        
+        # Save PDF to temp directory with a unique filename
+        filename = f"Sordoe_Opening_{first_name}_{edition_str}_{uuid.uuid4().hex[:8]}.pdf"
+        filepath = os.path.join(PDF_DIR, filename)
+        with open(filepath, "wb") as f:
+            f.write(pdf_buf.read())
+        
+        # Build the direct download URL
+        base_url = request.host_url.rstrip("/")
+        pdf_url = f"{base_url}/pdfs/{filename}"
+        
         return jsonify({
             "success": True,
             "filename": filename,
-            "pdf_base64": pdf_b64,
+            "pdf_url": pdf_url,
         })
     except Exception as e:
         return jsonify({"success": False, "error": str(e)}), 500
