@@ -3,12 +3,15 @@ import io
 import base64
 import urllib.request
 import fitz  # PyMuPDF
-from flask import Flask, request, jsonify, send_file
+from flask import Flask, request, jsonify
 
 app = Flask(__name__)
 
 TEMPLATE_URL = "https://files.manuscdn.com/user_upload_by_module/session_file/112574404/CRldWkvlXFkamsKs.pdf"
 BG_COLOR = (0.914, 0.882, 0.820)
+
+# Secret token — set as environment variable SORDOE_SECRET in Render dashboard
+SECRET_TOKEN = os.environ.get("SORDOE_SECRET", "")
 
 # Cache the template in memory after first download
 _template_bytes = None
@@ -87,6 +90,12 @@ def health():
 
 @app.route("/generate", methods=["POST"])
 def generate():
+    # Check secret token if one is configured
+    if SECRET_TOKEN:
+        token = request.headers.get("X-Sordoe-Secret", "")
+        if token != SECRET_TOKEN:
+            return jsonify({"success": False, "error": "Unauthorized"}), 401
+
     data = request.get_json(force=True)
     first_name = data.get("first_name", "Friend")
     edition_number = data.get("edition_number", 1)
