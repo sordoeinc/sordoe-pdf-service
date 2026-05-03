@@ -1,18 +1,14 @@
 import os
 import io
-import uuid
 import urllib.request
 import fitz  # PyMuPDF
-from flask import Flask, request, jsonify, send_from_directory
+from flask import Flask, request, jsonify
 
 app = Flask(__name__)
 
 TEMPLATE_URL = "https://files.manuscdn.com/user_upload_by_module/session_file/112574404/CRldWkvlXFkamsKs.pdf"
 BG_COLOR = (0.914, 0.882, 0.820)
-
-# Directory to store generated PDFs temporarily
-PDF_DIR = "/tmp/sordoe_pdfs"
-os.makedirs(PDF_DIR, exist_ok=True)
+DROPBOX_TOKEN = os.environ.get("DROPBOX_API_KEY", "")
 
 # Cache the template in memory after first download
 _template_bytes = None
@@ -84,14 +80,35 @@ def fill_pdf(first_name, edition_number):
     return out_buf, edition_str
 
 
+def upload_to_dropbox(pdf_bytes, filename):
+    """Upload PDF to Dropbox and return a direct download link."""
+    import dropbox
+    dbx = dropbox.Dropbox(DROPBOX_TOKEN)
+    dropbox_path = f"/Sordoe/RitualGuides/{filename}"
+    
+    dbx.files_upload(
+        pdf_bytes,
+        dropbox_path,
+        mode=dropbox.files.WriteMode.overwrite
+    )
+    
+    # Create a shared link with direct download
+    try:
+        link_metadata = dbx.sharing_create_shared_link_with_settings(dropbox_path)
+        shared_url = link_metadata.url
+    except dropbox.exceptions.ApiError:
+        # Link already exists — get existing one
+        links = dbx.sharing_list_shared_links(path=dropbox_path)
+        shared_url = links.links[0].url
+    
+    # Convert to direct download link (dl=1 instead of dl=0)
+    direct_url = shared_url.replace("?dl=0", "?dl=1").replace("www.dropbox.com", "dl.dropboxusercontent.com")
+    return direct_url
+
+
 @app.route("/health", methods=["GET"])
 def health():
     return jsonify({"status": "ok"})
-
-
-@app.route("/pdfs/<filename>", methods=["GET"])
-def serve_pdf(filename):
-    return send_from_directory(PDF_DIR, filename, mimetype="application/pdf")
 
 
 @app.route("/generate", methods=["POST"])
@@ -102,16 +119,10 @@ def generate():
 
     try:
         pdf_buf, edition_str = fill_pdf(first_name, int(float(str(edition_number).strip())))
+        filename = f"Sordoe_Opening_{first_name}_{edition_str}.pdf"
         
-        # Save PDF to temp directory with a unique filename
-        filename = f"Sordoe_Opening_{first_name}_{edition_str}_{uuid.uuid4().hex[:8]}.pdf"
-        filepath = os.path.join(PDF_DIR, filename)
-        with open(filepath, "wb") as f:
-            f.write(pdf_buf.read())
-        
-        # Build the direct download URL
-        base_url = request.host_url.rstrip("/")
-        pdf_url = f"{base_url}/pdfs/{filename}"
+        pdf_bytes = pdf_buf.read()
+        pdf_url = upload_to_dropbox(pdf_bytes, filename)
         
         return jsonify({
             "success": True,
